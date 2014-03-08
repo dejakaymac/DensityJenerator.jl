@@ -17,12 +17,45 @@ flatten{T}(a::Array{T}) = reshape(a,prod(size(a)))
 #works for both cases and mixed cases like
 #flatten({3,zeros(2,2,2),{2,3,{1,zeros(2,2)}}})
 
+## function LTF(u, C_F):
+##     return (20.0/9.0) * C_F * sign(u) * pow(abs(u),1.0/3.0);
 
-function buildA(v)
+## function ATF(u, C_F):
+##     return (5.0/9.0) * C_F * pow(abs(u), 4.0/3.0)
+
+function buildA(v, vo)
     # 
     info("Building A")
-    A = Sparse(I, J, V)
-    return A
+    #B = Array(2*npts, 2*npts)
+    #B = zeros(2*npts, 2*npts)
+    #B = diagm(ones(2*npts))
+   B = speye(2*npts, 2*npts)
+        
+    # u rows
+    for m = [3:2:2*npts-3]
+        u   = v[m]
+        phi = v[m+1]
+        uo  = vo[m]
+        twouo = 2 * uo
+        B[m,m]   = kappa/dt 
+                   -twouo * C_W * (1./uo) * (-2.0)
+        B[m,m+2] = twouo* - C_W * (1./uo) * (+1.0) # W
+        B[m,m-2] = twouo* - C_W * (1./uo) * (+1.0) # W
+        B[m,m+1] = twouo* -1.0                        # -phi
+    end     
+    # phi rows
+    for m = [4:2:2*npts-4]
+        u = v[m-1]
+        B[m,m-1] = -2 * u # LU2 
+        B[m,m+2] = (1./4*pi) * (1.0 / dx^2)      # phi_p
+        B[m,m  ] = (1./4*pi) * (-2  / dx^2)      # phi_o
+        B[m,m-2] = (1./4*pi) * (1.0 / dx^2)      # phi_m
+    end
+   
+    #A = spdiagm(B, d[, m, n])
+    #A = Sparse(I, J, V)
+    #return sparse(B)
+    return B
 end
 
 function buildF(v, vo, mu) 
@@ -30,36 +63,34 @@ function buildF(v, vo, mu)
     info("Building F")
     F = zeros(npts*2)
     # u rows
-    ## for m = [3:2:2*npts-3]
-    ##     u  = v[m]
-    ##     uo = vo[m]
-    ##     twouo = 2*uo
-    ##     F[m] = kappa*u/dt - twouo * mu
-
-    # phi rows
-    for m = [4:2:2*npts-3]
-        u = v[m-1]
-        println(u)
-        #mesh_idx = int(m/2)
-        mesh_idx = (m)/2
-        #println("m,mesh_idx $(m), $(mesh_idx)")
-        bi = b[mesh_idx]
-        #println("b=$(b)")
-        F[m] = bi + -u^2
-
+    for m = [3:2:2*npts-3]
+        u  = v[m]
+        uo = vo[m]
+        twouo = 2*uo
+        F[m] = kappa*u/dt - twouo * mu
     end
+    # phi rows
+    for m = [4:2:2*npts-4]
+        u = v[m-1]
+        mesh_idx = (m)/2
+        bi = b[mesh_idx]
+        F[m] = -bi + -u.*u
+        
+    end
+    println("is b sign right?")
     return F
 end
 
 function solve(A, F) 
-    info("Building A")
-    v = Sparsesolve(A,F)
+    info("Solve")
+    #v = Sparsesolve(A,F)
+    v = \(A,F)
     return v
 end
 
 function updateMu(mu, v) 
     u = v[1:2:end]
-    intu2 = sum(u^2) * dx
+    intu2 = sum(u .* u) * dx
     mu += omega * (intu2 - N)
     return mu
 end
@@ -99,11 +130,11 @@ function buildatoms(x, w, sigma, N)
     for pt = w
         b += gaussian(x, pt, sigma, N)
     end
-    return b
+    return b / length(x)
 end
     
 function uniform(x,N) 
-    return ones(length(x)) / N
+    return ones(length(x)) / length(x)
 end
     
 function buildpotential(b)
@@ -123,43 +154,87 @@ end
     info("pp : $(size(pp))")
     
     #[plot(pp,t2m[1:end,1,i]) for i=[1:20]]
-    [plot(pp/3600, t2m[1:end,1,i], "ko-") for i=[1:size(t2m)[3]]]
-    show()
+    #[plot(pp/3600, t2m[1:end,1,i], "ko-") for i=[1:size(t2m)[3]]]
+    #show()
         
-    t2m = sort(flatten(t2m[5,1,:])) # pp=1, bt=1, all ens mems
-    sigma = 0.005 #1.0
-    #N = length(t2m) # or just 1
-    N=1   
-    omega = 1
-    npts = 10000 #10*N
-    kappa
+    #t2m= sort(flatten(t2m[5,1,:])) # pp=1, bt=1, all ens mems
+    t2m = sort(flatten(t2m[15,1,:])) # pp=1, bt=1, all ens mems
+    sigma = 0.05 * 3 #1.0
+    # use srot to generate this 
+    N = length(t2m)  #1   
+    npts = 100 #10000 #10*N
+    kappa = 1.0
+    dt = 200.0
+    C_W = 0.0 # 0.1
+    ## dt = 10.0
+    ## C_W = 1.0 # 0.1
+    omega = 0.0
+    mu = 0.0 #0.1
+
+    figure()
     
-    x = createmesh_uniform(t2m, npts)
-    b = -buildatoms(x, t2m, sigma, N) 
-    u = sqrt(buildatoms(x, t2m, sigma, N))
+    x = createmesh_uniform(t2m, npts-1)
+    dx = x[2] - x[1]
+    b = buildatoms(x, t2m, sigma, 1.0)
+    #b = -1*b
+
+    subplot(224)
+    axhline(abs(sum(b)))
+
+    u = sqrt(buildatoms(x, t2m, sigma*8, 1.0))
+    #u = sqrt(buildatoms(x, t2m, sigma*2, 1.0))
+    #u = uniform(x, 1)
     #p = gaussian(t2m, x)
-    p = uniform(x, N)
-    mu = 0
+    p = uniform(x, 1)
     
-    #figure();plot(x,b);title("b")
-    figure();plot(x,map((ui) -> ui^2, u), "o-"); title("u^2")
+
+    subplot(221)
+    plot(x,b);title("b")
+    plot(x,map((ui) -> ui^2, u), "o-"); title("u^2")
     [axvline(x=xi,color="red") for xi=t2m]
-    show()
-    
+    draw()
+    sleep(1)
+
     v = zeros(length(x)*2)
     v[1:2:end] = u
     v[2:2:end] = p
     #v = flatten(collect(zip(u,p)))
     println(v)
     ncount = -1
-    maxcount = 1
+    maxcount = 100
     while ncount < maxcount
         ncount += 1
         vo = v
         F  = buildF(v, vo, mu)
-        #A  = buildA(v, vo)
-        #v  = solve(A, F)
-        #mu = updateMu(mu, v)
+        A  = buildA(v, vo)
+        v  = solve(A, F)
+
+        subplot(221); delaxes(); subplot(221)
+        plot(x,b)
+        plot(x, map((ui) -> ui^2, vo[1:2:end]), "k-"); title("u^2")
+        plot(x, map((ui) -> ui^2, v[1:2:end]), "o-"); title("u^2")
+        draw()
+        sleep(0.001)
+        
+        subplot(223); delaxes(); subplot(223) 
+        plot(x, map((ui) -> ui^2, v[2:2:end]), "o-"); title("phi")
+        draw()
+        #sleep(1)
+
+        
+        mu = updateMu(mu, v)
+        println( mu)
+        subplot(222)
+        plot(ncount, mu, "ro")
+        
+        subplot(224)
+        plot(ncount, sum(v[1:2:end].*v[1:2:end]), "ko")
+        
+        v[1] = v[3]
+        v[end-1] = v[end-3]
+        v[2] = v[4]
+        v[end-0] = v[end-2]
+        
     end    
         
 end # module
