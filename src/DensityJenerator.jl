@@ -32,7 +32,7 @@ function buildA(v, vo)
    B = speye(2*npts, 2*npts)
         
     # u rows
-    for m = [3:2:2*npts-3]
+    for m = [3:2:2*npts-2]
         u   = v[m]
         phi = v[m+1]
         uo  = vo[m]
@@ -44,7 +44,7 @@ function buildA(v, vo)
         B[m,m+1] = twouo* -1.0                        # -phi
     end     
     # phi rows
-    for m = [4:2:2*npts-4]
+    for m = [4:2:2*npts-2]
         u = v[m-1]
         B[m,m-1] = -2 * u # LU2 
         B[m,m+2] = (1./4*pi) * (1.0 / dx^2)      # phi_p
@@ -63,14 +63,14 @@ function buildF(v, vo, mu)
     info("Building F")
     F = zeros(npts*2)
     # u rows
-    for m = [3:2:2*npts-3]
+    for m = [3:2:2*npts-2]
         u  = v[m]
         uo = vo[m]
         twouo = 2*uo
         F[m] = kappa*u/dt - twouo * mu
     end
     # phi rows
-    for m = [4:2:2*npts-4]
+    for m = [4:2:2*npts-2]
         u = v[m-1]
         mesh_idx = (m)/2
         bi = b[mesh_idx]
@@ -90,8 +90,9 @@ end
 
 function updateMu(mu, v) 
     u = v[1:2:end]
-    intu2 = sum(u .* u) * dx
-    mu += omega * (intu2 - N)
+    intu2 = sum(u .* u) #* dx
+    println("dx here?")
+    mu += omega * (intu2 - sum(b))
     return mu
 end
     
@@ -102,7 +103,7 @@ function createmesh_uniform(x, npts)
     range = xmax - xmin
     xmin = xmin - 0.5*range
     xmax = xmax + 0.5*range
-    dx = (xmax - xmin) / npts
+    dx = (xmax - xmin) / (npts - 1)
     return [xmin:dx:xmax]
 end
 
@@ -130,7 +131,8 @@ function buildatoms(x, w, sigma, N)
     for pt = w
         b += gaussian(x, pt, sigma, N)
     end
-    return b / length(x)
+    #return b / length(w)
+    return b / sum(b)  
 end
     
 function uniform(x,N) 
@@ -161,21 +163,24 @@ end
     t2m = sort(flatten(t2m[15,1,:])) # pp=1, bt=1, all ens mems
     sigma = 0.05 * 3 #1.0
     # use srot to generate this 
-    N = length(t2m)  #1   
-    npts = 100 #10000 #10*N
+    #N = length(t2m)  #1   
+    npts = 101 #10000 #10*N
     kappa = 1.0
     dt = 200.0
-    C_W = 0.0 # 0.1
-    ## dt = 10.0
-    ## C_W = 1.0 # 0.1
-    omega = 0.0
+    C_W = 0.0 
+    dt = 1.0
+    C_W =  0.00001
+    #omega = 0.0001
+    omega = 0.1
     mu = 0.0 #0.1
 
     figure()
     
-    x = createmesh_uniform(t2m, npts-1)
+    x = createmesh_uniform(t2m, npts)
     dx = x[2] - x[1]
     b = buildatoms(x, t2m, sigma, 1.0)
+    b = abs(b)
+    b = b - minimum(b)
     #b = -1*b
 
     subplot(224)
@@ -198,19 +203,25 @@ end
     v = zeros(length(x)*2)
     v[1:2:end] = u
     v[2:2:end] = p
+    vo = v
     #v = flatten(collect(zip(u,p)))
     println(v)
     ncount = -1
-    maxcount = 100
+    maxcount = 100-1
     while ncount < maxcount
         ncount += 1
-        vo = v
         F  = buildF(v, vo, mu)
         A  = buildA(v, vo)
+        vo = v
         v  = solve(A, F)
-
+        
+        ## d  = solve(A, F)
+        ## vo = v
+        ## v = v +d
+        
         subplot(221); delaxes(); subplot(221)
         plot(x,b)
+        [axvline(x=xi,color="red") for xi=t2m]
         plot(x, map((ui) -> ui^2, vo[1:2:end]), "k-"); title("u^2")
         plot(x, map((ui) -> ui^2, v[1:2:end]), "o-"); title("u^2")
         draw()
@@ -221,6 +232,12 @@ end
         draw()
         #sleep(1)
 
+
+        v[1] = v[3]
+        v[end-1] = v[end-3]
+        v[2] = v[4]
+        v[end-0] = v[end-2]
+        
         
         mu = updateMu(mu, v)
         println( mu)
@@ -230,10 +247,6 @@ end
         subplot(224)
         plot(ncount, sum(v[1:2:end].*v[1:2:end]), "ko")
         
-        v[1] = v[3]
-        v[end-1] = v[end-3]
-        v[2] = v[4]
-        v[end-0] = v[end-2]
         
     end    
         
